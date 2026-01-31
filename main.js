@@ -205,7 +205,7 @@ class FaceOverlay {
   }
 }
 
-/** 3D watchdog from a 2D image: subdivided plane + morph targets for mouth/tongue. */
+/** 3D watchdog from a 2D image: subdivided plane + morph targets for mouth/tongue/eyes. */
 class Watchdog3D {
   constructor(scene, imageUrl, options = {}) {
     this.scene = scene;
@@ -269,8 +269,16 @@ class Watchdog3D {
     };
     const isLeft = (i) => getRowCol(i).col / wSeg < 0.5;
     const isRight = (i) => getRowCol(i).col / wSeg >= 0.5;
+    // Eye regions: top ~35% of plane, left/right 25% each
+    const isLeftEye = (i) => {
+      const { row, col } = getRowCol(i);
+      return row / hSeg <= 0.35 && col / wSeg >= 0.15 && col / wSeg <= 0.45;
+    };
+    const isRightEye = (i) => {
+      const { row, col } = getRowCol(i);
+      return row / hSeg <= 0.35 && col / wSeg >= 0.55 && col / wSeg <= 0.85;
+    };
 
-    const morphTargets = [];
     const names = [
       "mouthOpen",
       "jawOpen",
@@ -279,6 +287,8 @@ class Watchdog3D {
       "mouthSmileRight",
       "mouthPucker",
       "mouthFunnel",
+      "eyeBlinkLeft",
+      "eyeBlinkRight",
     ];
     names.forEach((name, idx) => {
       this.morphTargetDictionary[name] = idx;
@@ -291,6 +301,8 @@ class Watchdog3D {
     const smileRight = new Float32Array(vertexCount * 3);
     const pucker = new Float32Array(vertexCount * 3);
     const funnel = new Float32Array(vertexCount * 3);
+    const blinkLeft = new Float32Array(vertexCount * 3);
+    const blinkRight = new Float32Array(vertexCount * 3);
 
     for (let i = 0; i < vertexCount; i++) {
       const i3 = i * 3;
@@ -322,6 +334,15 @@ class Watchdog3D {
       funnel[i3] = 0;
       funnel[i3 + 1] = 0;
       funnel[i3 + 2] = fn;
+      // Blink: squash eye region (move vertices down slightly to suggest closed eye)
+      const blinkL = isLeftEye(i) ? -0.04 : 0;
+      const blinkR = isRightEye(i) ? -0.04 : 0;
+      blinkLeft[i3] = 0;
+      blinkLeft[i3 + 1] = blinkL;
+      blinkLeft[i3 + 2] = 0;
+      blinkRight[i3] = 0;
+      blinkRight[i3 + 1] = blinkR;
+      blinkRight[i3 + 2] = 0;
     }
 
     geometry.morphAttributes.position = [
@@ -332,6 +353,8 @@ class Watchdog3D {
       new THREE.BufferAttribute(smileRight, 3),
       new THREE.BufferAttribute(pucker, 3),
       new THREE.BufferAttribute(funnel, 3),
+      new THREE.BufferAttribute(blinkLeft, 3),
+      new THREE.BufferAttribute(blinkRight, 3),
     ];
     geometry.morphTargetsRelative = true;
     return geometry;
