@@ -91,10 +91,14 @@ class BasicScene {
   }
 }
 
+const RACCOON_GLB =
+  "https://assets.codepen.io/9177687/raccoon_head.glb";
+
 class Avatar {
-  constructor(url, scene) {
+  constructor(url, scene, options = {}) {
     this.url = url;
     this.scene = scene;
+    this.textureUrl = options.textureUrl || null;
     this.loader = new GLTFLoader();
     this.gltf = null;
     this.root = null;
@@ -112,8 +116,38 @@ class Avatar {
           this.morphTargetMeshes = [];
         }
         this.gltf = gltf;
-        this.scene.add(gltf.scene);
-        this.init(gltf);
+        if (this.textureUrl) {
+          const texLoader = new THREE.TextureLoader();
+          texLoader.load(
+            this.textureUrl,
+            (texture) => {
+              texture.encoding = THREE.sRGBEncoding;
+              this.gltf.scene.traverse((object) => {
+                if (object.isMesh && object.material) {
+                  const mat = object.material;
+                  if (Array.isArray(mat)) {
+                    mat.forEach((m) => {
+                      if (m.map) m.map = texture;
+                    });
+                  } else if (mat.map) {
+                    mat.map = texture;
+                  }
+                }
+              });
+              this.scene.add(this.gltf.scene);
+              this.init(this.gltf);
+            },
+            undefined,
+            (e) => {
+              console.warn("Texture load failed, using model default:", e);
+              this.scene.add(this.gltf.scene);
+              this.init(this.gltf);
+            }
+          );
+        } else {
+          this.scene.add(gltf.scene);
+          this.init(gltf);
+        }
       },
       (progress) =>
         console.log(
@@ -205,7 +239,7 @@ class FaceOverlay {
   }
 }
 
-/** 3D watchdog from a 2D image: subdivided plane + morph targets for mouth/tongue/eyes. */
+/** 3D watchdog from a 2D image: subdivided plane + morph targets for mouth/tongue. */
 class Watchdog3D {
   constructor(scene, imageUrl, options = {}) {
     this.scene = scene;
@@ -514,7 +548,10 @@ async function runDemo() {
 
     info.textContent = "Starting 3D view…";
     scene = new BasicScene();
-    watchdog3d = new Watchdog3D(scene.scene, "watchdog image.png", { scale: 40 });
+    // Raccoon 3D model (same as first test) with watchdog image as texture = same perfect movement
+    avatar = new Avatar(RACCOON_GLB, scene.scene, {
+      textureUrl: "watchdog image.png",
+    });
 
     info.textContent = "Loading face model… (may take a moment)";
     const vision = await FilesetResolver.forVisionTasks(
