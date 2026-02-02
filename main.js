@@ -93,6 +93,8 @@ class BasicScene {
 
 const RACCOON_GLB =
   "https://assets.codepen.io/9177687/raccoon_head.glb";
+// Local 3D watchdog model (use this, or raccoon + texture below)
+const WATCHDOG_GLB = "watchdog_head (1).glb";
 
 class Avatar {
   constructor(url, scene, options = {}) {
@@ -554,10 +556,8 @@ async function runDemo() {
 
     info.textContent = "Starting 3D view…";
     scene = new BasicScene();
-    // Raccoon 3D model (same as first test) with watchdog image as texture = same perfect movement
-    avatar = new Avatar(RACCOON_GLB, scene.scene, {
-      textureUrl: "watchdog image.png",
-    });
+    // Use local watchdog 3D model if it has blendshapes; else raccoon + watchdog texture
+    avatar = new Avatar(WATCHDOG_GLB, scene.scene);
 
     info.textContent = "Loading face model… (may take a moment)";
     const vision = await FilesetResolver.forVisionTasks(
