@@ -91,16 +91,29 @@ class BasicScene {
   }
 }
 
-const RACCOON_GLB =
-  "https://assets.codepen.io/9177687/raccoon_head.glb";
-// Local 3D watchdog model (use this, or raccoon + texture below)
-const WATCHDOG_GLB = "watchdog_head (1).glb";
+/** Morph target names in export order (from build-watchdog-glb.html). Used when GLB has no morphTargetDictionary. */
+const WATCHDOG_MORPH_TARGET_NAMES = [
+  "browDownLeft", "browDownRight", "browInnerUp", "browOuterUpLeft", "browOuterUpRight",
+  "cheekPuff", "cheekSquintLeft", "cheekSquintRight",
+  "eyeBlinkLeft", "eyeBlinkRight",
+  "eyeLookDownLeft", "eyeLookDownRight", "eyeLookInLeft", "eyeLookInRight",
+  "eyeLookOutLeft", "eyeLookOutRight", "eyeLookUpLeft", "eyeLookUpRight",
+  "eyeSquintLeft", "eyeSquintRight", "eyeWideLeft", "eyeWideRight",
+  "jawForward", "jawLeft", "jawOpen", "jawRight",
+  "mouthClose", "mouthDimpleLeft", "mouthDimpleRight", "mouthFrownLeft", "mouthFrownRight",
+  "mouthFunnel", "mouthLeft", "mouthLowerDownLeft", "mouthLowerDownRight",
+  "mouthPressLeft", "mouthPressRight", "mouthPucker", "mouthRight",
+  "mouthRollLower", "mouthRollUpper", "mouthShrugLower", "mouthShrugUpper",
+  "mouthSmileLeft", "mouthSmileRight", "mouthStretchLeft", "mouthStretchRight",
+  "mouthUpperUpLeft", "mouthUpperUpRight",
+  "noseSneerLeft", "noseSneerRight",
+];
 
 class Avatar {
   constructor(url, scene, options = {}) {
     this.url = url;
     this.scene = scene;
-    this.textureUrl = options.textureUrl || null;
+    this.morphTargetNames = options.morphTargetNames || null;
     this.loader = new GLTFLoader();
     this.gltf = null;
     this.root = null;
@@ -118,51 +131,20 @@ class Avatar {
           this.morphTargetMeshes = [];
         }
         this.gltf = gltf;
-        if (this.textureUrl) {
-          const texLoader = new THREE.TextureLoader();
-          texLoader.load(
-            this.textureUrl,
-            (texture) => {
-              texture.encoding = THREE.sRGBEncoding;
-              // Replace every mesh material with watchdog texture so it shows clearly (no black/dark lighting)
-              this.gltf.scene.traverse((object) => {
-                if (object.isMesh && object.material) {
-                  const materials = Array.isArray(object.material)
-                    ? object.material
-                    : [object.material];
-                  const newMats = materials.map(
-                    () =>
-                      new THREE.MeshBasicMaterial({
-                        map: texture,
-                        morphTargets: true,
-                        side: THREE.FrontSide,
-                      })
-                  );
-                  object.material =
-                    newMats.length === 1 ? newMats[0] : newMats;
-                }
-              });
-              this.scene.add(this.gltf.scene);
-              this.init(this.gltf);
-            },
-            undefined,
-            (e) => {
-              console.warn("Texture load failed, using model default:", e);
-              this.scene.add(this.gltf.scene);
-              this.init(this.gltf);
-            }
-          );
-        } else {
-          this.scene.add(gltf.scene);
-          this.init(gltf);
-        }
+        this.scene.add(gltf.scene);
+        this.init(gltf);
       },
       (progress) =>
         console.log(
           "Loading model...",
           progress.total ? (100.0 * progress.loaded) / progress.total + "%" : "..."
         ),
-      (error) => console.error(error)
+      (error) => {
+        console.error("Failed to load avatar GLB:", error);
+        if (typeof showError === "function") {
+          showError("Could not load watchdog.glb. Run build-watchdog-glb.html first, select your image, and place watchdog.glb next to index.html.");
+        }
+      }
     );
   }
 
@@ -174,7 +156,17 @@ class Avatar {
       if (!object.isMesh) return;
       const mesh = object;
       mesh.frustumCulled = false;
-      if (!mesh.morphTargetDictionary || !mesh.morphTargetInfluences) return;
+      if (!mesh.morphTargetInfluences) return;
+      // GLB from build-watchdog-glb.html has morph targets but no names; apply morphTargetNames if provided
+      if (this.morphTargetNames && mesh.morphTargetInfluences.length === this.morphTargetNames.length) {
+        mesh.morphTargetDictionary = mesh.morphTargetDictionary || {};
+        if (Object.keys(mesh.morphTargetDictionary).length === 0) {
+          this.morphTargetNames.forEach((name, idx) => {
+            mesh.morphTargetDictionary[name] = idx;
+          });
+        }
+      }
+      if (!mesh.morphTargetDictionary) return;
       this.morphTargetMeshes.push(mesh);
     });
   }
@@ -247,7 +239,7 @@ class FaceOverlay {
   }
 }
 
-/** 3D watchdog from a 2D image: subdivided plane + morph targets for mouth/tongue. */
+/** 3D watchdog from a 2D image: subdivided plane + morph targets for mouth/tongue/eyes. */
 class Watchdog3D {
   constructor(scene, imageUrl, options = {}) {
     this.scene = scene;
@@ -424,29 +416,19 @@ let faceLandmarker = null;
 let video = null;
 let scene = null;
 let avatar = null;
-let faceOverlay = null;
-let watchdog3d = null;
 
 function detectFaceLandmarks(time) {
   if (!faceLandmarker || !video) return;
   const landmarks = faceLandmarker.detectForVideo(video, time);
 
-  const transformationMatrices = landmarks.facialTransformationMatrixes;
+    const transformationMatrices = landmarks.facialTransformationMatrixes;
   if (transformationMatrices && transformationMatrices.length > 0) {
     const matrix = new THREE.Matrix4().fromArray(transformationMatrices[0].data);
-    if (faceOverlay) faceOverlay.applyMatrix(matrix, { scale: 40 });
     if (avatar) {
       avatar.applyMatrix(matrix, { scale: 40 });
       const blendshapes = landmarks.faceBlendshapes;
       if (blendshapes && blendshapes.length > 0) {
         avatar.updateBlendshapes(retarget(blendshapes));
-      }
-    }
-    if (watchdog3d) {
-      watchdog3d.applyMatrix(matrix, { scale: 40 });
-      const blendshapes = landmarks.faceBlendshapes;
-      if (blendshapes && blendshapes.length > 0) {
-        watchdog3d.updateBlendshapes(retarget(blendshapes));
       }
     }
   }
@@ -556,9 +538,9 @@ async function runDemo() {
 
     info.textContent = "Starting 3D view…";
     scene = new BasicScene();
-    // Use local watchdog 3D model with watchdog image texture so it displays properly
-    avatar = new Avatar(WATCHDOG_GLB, scene.scene, {
-      textureUrl: "watchdog image.png",
+    // Use watchdog.glb (build from your image via build-watchdog-glb.html) — same format as raccoon GLB
+    avatar = new Avatar("watchdog.glb", scene.scene, {
+      morphTargetNames: WATCHDOG_MORPH_TARGET_NAMES,
     });
 
     info.textContent = "Loading face model… (may take a moment)";

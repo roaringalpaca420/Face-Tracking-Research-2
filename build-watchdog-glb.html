@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Build Watchdog GLB — 2D Image to Raccoon-Style GLB</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #1a1a2e;
+      color: #eee;
+      min-height: 100vh;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 20px;
+    }
+    h1 { font-size: 1.4rem; margin-bottom: 8px; }
+    p { color: #aaa; font-size: 14px; max-width: 480px; text-align: center; line-height: 1.5; }
+    .card {
+      background: #16213e;
+      border-radius: 12px;
+      padding: 24px;
+      max-width: 500px;
+      width: 100%;
+    }
+    label {
+      display: block;
+      margin-bottom: 8px;
+      font-weight: 500;
+    }
+    input[type="file"] {
+      width: 100%;
+      padding: 12px;
+      border: 2px dashed #0f3460;
+      border-radius: 8px;
+      background: #0f3460;
+      color: #eee;
+      cursor: pointer;
+      margin-bottom: 16px;
+    }
+    input[type="file"]::file-selector-button {
+      background: #e94560;
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 6px;
+      margin-right: 12px;
+      cursor: pointer;
+    }
+    button {
+      width: 100%;
+      padding: 14px;
+      background: #e94560;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    }
+    button:hover { opacity: 0.9; }
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    #preview {
+      max-width: 240px;
+      max-height: 240px;
+      border-radius: 8px;
+      margin-top: 16px;
+      display: none;
+      border: 2px solid #0f3460;
+    }
+    #status {
+      margin-top: 12px;
+      font-size: 13px;
+      color: #0ff;
+    }
+    .error { color: #f55; }
+  </style>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.150.1/build/three.module.js",
+      "three/": "https://cdn.jsdelivr.net/npm/three@0.150.1/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <h1>Build Watchdog GLB</h1>
+  <p>Convert your 2D watchdog image into a GLB file (same format as the raccoon model) with full MediaPipe face blendshapes. Use the output in the Avatar class.</p>
+
+  <div class="card">
+    <label for="imageInput">Select your face/head image (PNG, JPG):</label>
+    <input type="file" id="imageInput" accept="image/png,image/jpeg,image/jpg" />
+    <img id="preview" alt="Preview" />
+    <button id="buildBtn" disabled>Build watchdog.glb</button>
+    <div id="status"></div>
+  </div>
+
+  <script type="module">
+    // MediaPipe FaceLandmarker blendshape names (52 total, same order as face_blendshapes_graph.cc)
+    const MEDIAPIPE_BLENDSHAPE_NAMES = [
+      "browDownLeft", "browDownRight", "browInnerUp", "browOuterUpLeft", "browOuterUpRight",
+      "cheekPuff", "cheekSquintLeft", "cheekSquintRight",
+      "eyeBlinkLeft", "eyeBlinkRight",
+      "eyeLookDownLeft", "eyeLookDownRight", "eyeLookInLeft", "eyeLookInRight",
+      "eyeLookOutLeft", "eyeLookOutRight", "eyeLookUpLeft", "eyeLookUpRight",
+      "eyeSquintLeft", "eyeSquintRight", "eyeWideLeft", "eyeWideRight",
+      "jawForward", "jawLeft", "jawOpen", "jawRight",
+      "mouthClose", "mouthDimpleLeft", "mouthDimpleRight", "mouthFrownLeft", "mouthFrownRight",
+      "mouthFunnel", "mouthLeft", "mouthLowerDownLeft", "mouthLowerDownRight",
+      "mouthPressLeft", "mouthPressRight", "mouthPucker", "mouthRight",
+      "mouthRollLower", "mouthRollUpper", "mouthShrugLower", "mouthShrugUpper",
+      "mouthSmileLeft", "mouthSmileRight", "mouthStretchLeft", "mouthStretchRight",
+      "mouthUpperUpLeft", "mouthUpperUpRight",
+      "noseSneerLeft", "noseSneerRight",
+    ];
+
+    const W_SEG = 24;
+    const H_SEG = 24;
+
+    function getRowCol(i) {
+      const col = i % (W_SEG + 1);
+      const row = Math.floor(i / (W_SEG + 1));
+      return { row, col, rowNorm: row / H_SEG, colNorm: col / W_SEG };
+    }
+
+    function createGeometryWithMorphTargets() {
+      const geometry = new THREE.PlaneGeometry(1, 1, W_SEG, H_SEG);
+      const vertexCount = geometry.attributes.position.count;
+
+      const rc = (i) => getRowCol(i);
+
+      const isBrow = (i) => rc(i).rowNorm >= 0.18 && rc(i).rowNorm <= 0.38;
+      const isLeftBrow = (i) => isBrow(i) && rc(i).colNorm < 0.5;
+      const isRightBrow = (i) => isBrow(i) && rc(i).colNorm >= 0.5;
+      const isInnerBrow = (i) => isBrow(i) && rc(i).colNorm >= 0.35 && rc(i).colNorm <= 0.65;
+      const isOuterBrowLeft = (i) => isBrow(i) && rc(i).colNorm >= 0.1 && rc(i).colNorm <= 0.45;
+      const isOuterBrowRight = (i) => isBrow(i) && rc(i).colNorm >= 0.55 && rc(i).colNorm <= 0.9;
+
+      const isLeftEye = (i) => rc(i).rowNorm <= 0.42 && rc(i).colNorm >= 0.12 && rc(i).colNorm <= 0.48;
+      const isRightEye = (i) => rc(i).rowNorm <= 0.42 && rc(i).colNorm >= 0.52 && rc(i).colNorm <= 0.88;
+
+      const isLeftCheek = (i) => rc(i).rowNorm >= 0.35 && rc(i).rowNorm <= 0.7 && rc(i).colNorm <= 0.4;
+      const isRightCheek = (i) => rc(i).rowNorm >= 0.35 && rc(i).rowNorm <= 0.7 && rc(i).colNorm >= 0.6;
+
+      const isMouth = (i) => rc(i).rowNorm >= 0.68 && rc(i).colNorm >= 0.22 && rc(i).colNorm <= 0.78;
+      const isMouthLeft = (i) => isMouth(i) && rc(i).colNorm < 0.5;
+      const isMouthRight = (i) => isMouth(i) && rc(i).colNorm >= 0.5;
+      const isMouthCenter = (i) => rc(i).rowNorm >= 0.8 && rc(i).colNorm >= 0.38 && rc(i).colNorm <= 0.62;
+      const isJaw = (i) => rc(i).rowNorm >= 0.62;
+
+      const isNose = (i) => rc(i).rowNorm >= 0.38 && rc(i).rowNorm <= 0.62 && rc(i).colNorm >= 0.32 && rc(i).colNorm <= 0.68;
+      const isNoseLeft = (i) => isNose(i) && rc(i).colNorm < 0.5;
+      const isNoseRight = (i) => isNose(i) && rc(i).colNorm >= 0.5;
+
+      const createTarget = (fn) => {
+        const arr = new Float32Array(vertexCount * 3);
+        for (let i = 0; i < vertexCount; i++) {
+          const i3 = i * 3;
+          const v = fn(i);
+          arr[i3] = v?.x ?? 0;
+          arr[i3 + 1] = v?.y ?? 0;
+          arr[i3 + 2] = v?.z ?? 0;
+        }
+        return new THREE.BufferAttribute(arr, 3);
+      };
+
+      const targets = [];
+
+      for (const name of MEDIAPIPE_BLENDSHAPE_NAMES) {
+        let attr;
+        switch (name) {
+          case "browDownLeft":
+            attr = createTarget((i) => isLeftBrow(i) ? { x: 0, y: -0.02, z: 0 } : null);
+            break;
+          case "browDownRight":
+            attr = createTarget((i) => isRightBrow(i) ? { x: 0, y: -0.02, z: 0 } : null);
+            break;
+          case "browInnerUp":
+            attr = createTarget((i) => isInnerBrow(i) ? { x: 0, y: 0.025, z: 0 } : null);
+            break;
+          case "browOuterUpLeft":
+            attr = createTarget((i) => isOuterBrowLeft(i) ? { x: 0, y: 0.03, z: 0 } : null);
+            break;
+          case "browOuterUpRight":
+            attr = createTarget((i) => isOuterBrowRight(i) ? { x: 0, y: 0.03, z: 0 } : null);
+            break;
+          case "cheekPuff":
+            attr = createTarget((i) => (isLeftCheek(i) || isRightCheek(i)) ? { x: 0, y: 0, z: 0.08 } : null);
+            break;
+          case "cheekSquintLeft":
+            attr = createTarget((i) => isLeftCheek(i) ? { x: 0.02, y: -0.01, z: 0.03 } : null);
+            break;
+          case "cheekSquintRight":
+            attr = createTarget((i) => isRightCheek(i) ? { x: -0.02, y: -0.01, z: 0.03 } : null);
+            break;
+          case "eyeBlinkLeft":
+            attr = createTarget((i) => isLeftEye(i) ? { x: 0, y: -0.045, z: 0 } : null);
+            break;
+          case "eyeBlinkRight":
+            attr = createTarget((i) => isRightEye(i) ? { x: 0, y: -0.045, z: 0 } : null);
+            break;
+          case "eyeLookDownLeft": case "eyeLookDownRight": case "eyeLookInLeft": case "eyeLookInRight":
+          case "eyeLookOutLeft": case "eyeLookOutRight": case "eyeLookUpLeft": case "eyeLookUpRight":
+            attr = createTarget(() => null);
+            break;
+          case "eyeSquintLeft":
+            attr = createTarget((i) => isLeftEye(i) ? { x: 0, y: -0.025, z: 0 } : null);
+            break;
+          case "eyeSquintRight":
+            attr = createTarget((i) => isRightEye(i) ? { x: 0, y: -0.025, z: 0 } : null);
+            break;
+          case "eyeWideLeft":
+            attr = createTarget((i) => isLeftEye(i) ? { x: 0, y: 0.02, z: 0 } : null);
+            break;
+          case "eyeWideRight":
+            attr = createTarget((i) => isRightEye(i) ? { x: 0, y: 0.02, z: 0 } : null);
+            break;
+          case "jawForward":
+            attr = createTarget((i) => isJaw(i) ? { x: 0, y: 0, z: 0.04 } : null);
+            break;
+          case "jawLeft":
+            attr = createTarget((i) => isJaw(i) && rc(i).colNorm < 0.5 ? { x: 0.03, y: 0, z: 0 } : null);
+            break;
+          case "jawOpen":
+            attr = createTarget((i) => isJaw(i) ? { x: 0, y: -0.04, z: 0.06 } : null);
+            break;
+          case "jawRight":
+            attr = createTarget((i) => isJaw(i) && rc(i).colNorm >= 0.5 ? { x: -0.03, y: 0, z: 0 } : null);
+            break;
+          case "mouthClose":
+            attr = createTarget((i) => isMouth(i) ? { x: 0, y: 0.02, z: -0.03 } : null);
+            break;
+          case "mouthDimpleLeft":
+            attr = createTarget((i) => isMouthLeft(i) ? { x: -0.02, y: 0, z: 0.02 } : null);
+            break;
+          case "mouthDimpleRight":
+            attr = createTarget((i) => isMouthRight(i) ? { x: 0.02, y: 0, z: 0.02 } : null);
+            break;
+          case "mouthFrownLeft":
+            attr = createTarget((i) => isMouthLeft(i) ? { x: 0, y: -0.02, z: 0 } : null);
+            break;
+          case "mouthFrownRight":
+            attr = createTarget((i) => isMouthRight(i) ? { x: 0, y: -0.02, z: 0 } : null);
+            break;
+          case "mouthFunnel":
+            attr = createTarget((i) => isMouth(i) ? { x: 0, y: 0, z: 0.045 } : null);
+            break;
+          case "mouthLeft":
+            attr = createTarget((i) => isMouth(i) && rc(i).colNorm < 0.5 ? { x: -0.04, y: 0, z: 0 } : null);
+            break;
+          case "mouthLowerDownLeft":
+            attr = createTarget((i) => isMouthLeft(i) && rc(i).rowNorm >= 0.75 ? { x: 0, y: -0.03, z: 0 } : null);
+            break;
+          case "mouthLowerDownRight":
+            attr = createTarget((i) => isMouthRight(i) && rc(i).rowNorm >= 0.75 ? { x: 0, y: -0.03, z: 0 } : null);
+            break;
+          case "mouthPressLeft":
+            attr = createTarget((i) => isMouthLeft(i) ? { x: 0, y: 0.015, z: 0.02 } : null);
+            break;
+          case "mouthPressRight":
+            attr = createTarget((i) => isMouthRight(i) ? { x: 0, y: 0.015, z: 0.02 } : null);
+            break;
+          case "mouthPucker":
+            attr = createTarget((i) => isMouth(i) ? { x: 0, y: 0, z: 0.05 } : null);
+            break;
+          case "mouthRight":
+            attr = createTarget((i) => isMouth(i) && rc(i).colNorm >= 0.5 ? { x: 0.04, y: 0, z: 0 } : null);
+            break;
+          case "mouthRollLower":
+            attr = createTarget((i) => isMouth(i) && rc(i).rowNorm >= 0.7 ? { x: 0, y: -0.02, z: 0.02 } : null);
+            break;
+          case "mouthRollUpper":
+            attr = createTarget((i) => isMouth(i) && rc(i).rowNorm < 0.75 ? { x: 0, y: 0.02, z: 0.02 } : null);
+            break;
+          case "mouthShrugLower":
+            attr = createTarget((i) => isMouth(i) && rc(i).rowNorm >= 0.7 ? { x: 0, y: 0.02, z: 0 } : null);
+            break;
+          case "mouthShrugUpper":
+            attr = createTarget((i) => isMouth(i) && rc(i).rowNorm < 0.75 ? { x: 0, y: 0.02, z: 0 } : null);
+            break;
+          case "mouthSmileLeft":
+            attr = createTarget((i) => isMouthLeft(i) ? { x: 0.05, y: 0.02, z: 0 } : null);
+            break;
+          case "mouthSmileRight":
+            attr = createTarget((i) => isMouthRight(i) ? { x: -0.05, y: 0.02, z: 0 } : null);
+            break;
+          case "mouthStretchLeft":
+            attr = createTarget((i) => isMouthLeft(i) ? { x: -0.04, y: 0, z: 0 } : null);
+            break;
+          case "mouthStretchRight":
+            attr = createTarget((i) => isMouthRight(i) ? { x: 0.04, y: 0, z: 0 } : null);
+            break;
+          case "mouthUpperUpLeft":
+            attr = createTarget((i) => isMouthLeft(i) && rc(i).rowNorm < 0.75 ? { x: 0, y: 0.03, z: 0 } : null);
+            break;
+          case "mouthUpperUpRight":
+            attr = createTarget((i) => isMouthRight(i) && rc(i).rowNorm < 0.75 ? { x: 0, y: 0.03, z: 0 } : null);
+            break;
+          case "noseSneerLeft":
+            attr = createTarget((i) => isNoseLeft(i) ? { x: -0.02, y: 0, z: 0.02 } : null);
+            break;
+          case "noseSneerRight":
+            attr = createTarget((i) => isNoseRight(i) ? { x: 0.02, y: 0, z: 0.02 } : null);
+            break;
+          default:
+            attr = createTarget(() => null);
+        }
+        targets.push(attr);
+      }
+
+      geometry.morphAttributes.position = targets;
+      geometry.morphTargetsRelative = true;
+      return geometry;
+    }
+
+    async function buildGLB(imageFile) {
+      const { default: THREE } = await import("three");
+      const { GLTFExporter } = await import("https://cdn.jsdelivr.net/npm/three@0.150.1/examples/jsm/exporters/GLTFExporter.js");
+
+      const texture = await new Promise((resolve, reject) => {
+        const loader = new THREE.TextureLoader();
+        const url = URL.createObjectURL(imageFile);
+        loader.load(url, (tex) => {
+          URL.revokeObjectURL(url);
+          tex.encoding = THREE.sRGBEncoding;
+          resolve(tex);
+        }, undefined, reject);
+      });
+
+      const geometry = createGeometryWithMorphTargets();
+      const material = new THREE.MeshBasicMaterial({
+        map: texture,
+        transparent: true,
+        side: THREE.DoubleSide,
+        depthWrite: true,
+        morphTargets: true,
+      });
+
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.name = "watchdog_head";
+      mesh.morphTargetDictionary = {};
+      MEDIAPIPE_BLENDSHAPE_NAMES.forEach((name, idx) => {
+        mesh.morphTargetDictionary[name] = idx;
+      });
+      mesh.morphTargetInfluences = new Array(MEDIAPIPE_BLENDSHAPE_NAMES.length).fill(0);
+      mesh.frustumCulled = false;
+
+      const rootBone = new THREE.Bone();
+      rootBone.name = "root";
+      rootBone.position.set(0, 0, 0);
+
+      const root = new THREE.Group();
+      root.name = "Watchdog";
+      root.add(rootBone);
+      root.add(mesh);
+
+      const exporter = new GLTFExporter();
+      const glb = await exporter.parseAsync(root, {
+        binary: true,
+        maxTextureSize: 2048,
+      });
+
+      const blob = new Blob([glb], { type: "model/gltf-binary" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "watchdog.glb";
+      a.click();
+      URL.revokeObjectURL(a.href);
+
+      return glb;
+    }
+
+    const imageInput = document.getElementById("imageInput");
+    const buildBtn = document.getElementById("buildBtn");
+    const preview = document.getElementById("preview");
+    const status = document.getElementById("status");
+
+    imageInput.addEventListener("change", (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        const url = URL.createObjectURL(file);
+        preview.src = url;
+        preview.style.display = "block";
+        buildBtn.disabled = false;
+        status.textContent = "";
+      } else {
+        preview.style.display = "none";
+        buildBtn.disabled = true;
+      }
+    });
+
+    buildBtn.addEventListener("click", async () => {
+      const file = imageInput.files[0];
+      if (!file) return;
+      buildBtn.disabled = true;
+      status.textContent = "Building GLB…";
+      status.classList.remove("error");
+      try {
+        await buildGLB(file);
+        status.textContent = "Done! watchdog.glb downloaded. Place it next to index.html and update main.js to use it.";
+      } catch (err) {
+        status.textContent = "Error: " + (err.message || String(err));
+        status.classList.add("error");
+      }
+      buildBtn.disabled = false;
+    });
+  </script>
+</body>
+</html>

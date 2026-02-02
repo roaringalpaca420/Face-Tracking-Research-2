@@ -2,6 +2,16 @@
 
 MediaPipe + Three.js face-tracking avatar. Works in the browser on desktop and phone.
 
+**This repo uses a GLB avatar** (same format as the raccoon model): your 2D image is converted into a `.glb` file with full MediaPipe face blendshapes (mouth, eyes, brows, etc.). Black background, floating head only.
+
+## Build your GLB from your 2D image
+
+1. Start a local server (`npx serve .` or `python -m http.server 8000`), then open **`build-watchdog-glb.html`** in your browser.
+2. Click **Choose File** and select your face/head image (`watchdog image.png` or any PNG/JPG).
+3. Click **Build watchdog.glb** — the file will download.
+4. Place `watchdog.glb` in this folder, next to `index.html` and `main.js`.
+5. Run the demo (see below).
+
 ---
 
 ## Test on your phone (GitHub Pages)
@@ -9,7 +19,7 @@ MediaPipe + Three.js face-tracking avatar. Works in the browser on desktop and p
 1. **Push this folder to a GitHub repo** (if you haven’t already):
    ```bash
    git init
-   git add index.html main.js .nojekyll README.md
+   git add index.html main.js build-watchdog-glb.html .nojekyll README.md watchdog.glb
    git commit -m "Face tracker avatar web app"
    git branch -M main
    git remote add origin https://github.com/YOUR_USERNAME/YOUR_REPO.git
@@ -54,20 +64,14 @@ MediaPipe + Three.js face-tracking avatar. Works in the browser on desktop and p
 
 | File | Purpose |
 |------|--------|
-| **index.html** | Page with hidden `<video>`, mobile-friendly layout |
-| **main.js** | Demo logic (webcam → MediaPipe → Three.js avatar), with Safari/iOS fallback |
+| **index.html** | Page with hidden `<video>`, import map for Three.js, mobile-friendly layout |
+| **main.js** | Demo logic: Avatar (GLB loader), MediaPipe face blendshapes, retarget gains |
+| **build-watchdog-glb.html** | Build tool: converts your 2D image → `watchdog.glb` (raccoon-style format) |
+| **watchdog.glb** | Your face as a 3D model (build from your image via build-watchdog-glb.html) |
 | **.nojekyll** | Tells GitHub Pages not to use Jekyll |
-| **MediaPipe Face Virtual Avatar Demo.txt** | Original TypeScript reference |
 
-## Change the avatar
+## Change the avatar image
 
-Edit `main.js` and update the URL in the `Avatar` constructor:
-
-```js
-const avatar = new Avatar(
-  "https://your-url-here/your_model.glb",
-  scene.scene
-);
-```
-
-Use a GLB with blendshapes for best facial motion.
+1. Open `build-watchdog-glb.html` in your browser.
+2. Select your new face/head image.
+3. Click **Build watchdog.glb** and replace the existing file.
