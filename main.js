@@ -556,8 +556,10 @@ async function runDemo() {
 
     info.textContent = "Starting 3D view…";
     scene = new BasicScene();
-    // Use local watchdog 3D model if it has blendshapes; else raccoon + watchdog texture
-    avatar = new Avatar(WATCHDOG_GLB, scene.scene);
+    // Use local watchdog 3D model with watchdog image texture so it displays properly
+    avatar = new Avatar(WATCHDOG_GLB, scene.scene, {
+      textureUrl: "watchdog image.png",
+    });
 
     info.textContent = "Loading face model… (may take a moment)";
     const vision = await FilesetResolver.forVisionTasks(
