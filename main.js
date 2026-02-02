@@ -122,16 +122,22 @@ class Avatar {
             this.textureUrl,
             (texture) => {
               texture.encoding = THREE.sRGBEncoding;
+              // Replace every mesh material with watchdog texture so it shows clearly (no black/dark lighting)
               this.gltf.scene.traverse((object) => {
                 if (object.isMesh && object.material) {
-                  const mat = object.material;
-                  if (Array.isArray(mat)) {
-                    mat.forEach((m) => {
-                      if (m.map) m.map = texture;
-                    });
-                  } else if (mat.map) {
-                    mat.map = texture;
-                  }
+                  const materials = Array.isArray(object.material)
+                    ? object.material
+                    : [object.material];
+                  const newMats = materials.map(
+                    () =>
+                      new THREE.MeshBasicMaterial({
+                        map: texture,
+                        morphTargets: true,
+                        side: THREE.FrontSide,
+                      })
+                  );
+                  object.material =
+                    newMats.length === 1 ? newMats[0] : newMats;
                 }
               });
               this.scene.add(this.gltf.scene);
